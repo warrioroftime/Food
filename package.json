@@ -1,0 +1,16 @@
+{
+  "name": "fooddanilo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sistema SaaS para Bares e Restaurantes - PDV, Mesas, Comandas, Cozinha, Delivery, Estoque, Financeiro e mais.",
+  "scripts": {
+    "install:all": "npm install && npm --prefix server install && npm --prefix client install",
+    "seed": "npm --prefix server run seed",
+    "dev": "concurrently -n server,client -c blue,magenta \"npm --prefix server run dev\" \"npm --prefix client run dev\"",
+    "start": "concurrently -n server,client -c blue,magenta \"npm --prefix server start\" \"npm --prefix client run dev\"",
+    "build": "npm --prefix client run build"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
