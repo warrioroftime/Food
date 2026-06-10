@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api, brl } from '../api.js';
 import { Modal, Loading } from '../components/ui.jsx';
+import ProductPicker from '../components/ProductPicker.jsx';
+import PaymentModal from '../components/PaymentModal.jsx';
 import { Plus, Users, Search, ChevronLeft, Trash2, Printer, Bell } from 'lucide-react';
 
 const STATUS = {
@@ -9,7 +11,6 @@ const STATUS = {
   reserved: { label: 'Reservada', badge: 'blue' },
 };
 const ITEM_ST = { received: ['Recebido', 'blue'], preparing: ['Preparando', 'yellow'], ready: ['Pronto', 'green'], delivered: ['Entregue', 'gray'], cancelled: ['Cancelado', 'red'] };
-const METHODS = ['dinheiro', 'pix', 'cartao', 'voucher'];
 
 export default function Mesas() {
   const [tables, setTables] = useState(null);
@@ -19,7 +20,6 @@ export default function Mesas() {
   const [pickComanda, setPickComanda] = useState(false);
   const [search, setSearch] = useState('');
   const [area, setArea] = useState('todos');
-  const [method, setMethod] = useState('dinheiro');
 
   const load = () => api.get('/tables').then(setTables);
   useEffect(() => { load(); api.get('/products').then(setProducts); }, []);
@@ -44,18 +44,22 @@ export default function Mesas() {
     setSheet({ table: t, mode: 'order', order });
     load();
   }
-  async function addItem(p) {
-    await api.post(`/orders/${sheet.order.id}/items`, { product_id: p.id, qty: 1 });
-    refreshOrder(sheet.order.id);
+  async function launchItems(cart) {
+    for (const i of cart) {
+      await api.post(`/orders/${sheet.order.id}/items`, { product_id: i.id, qty: i.qty, notes: i.notes });
+    }
+    const order = await api.get('/orders/' + sheet.order.id);
+    setSheet(s => ({ ...s, order, mode: 'order' }));
+    load();
   }
   async function cancelItem(it) {
     await api.put('/order-items/' + it.id, { status: 'cancelled' });
     refreshOrder(sheet.order.id);
   }
   async function setStatus(t, status) { await api.put('/tables/' + t.id, { status }); setSheet(null); load(); }
-  async function closeConta() {
-    await api.post(`/orders/${sheet.order.id}/close`, { payments: [{ method, amount: sheet.order.total }] });
-    setSheet(null); setMethod('dinheiro'); load();
+  async function closeConta(payments) {
+    await api.post(`/orders/${sheet.order.id}/close`, { payments });
+    setSheet(null); load();
   }
   async function addTable() {
     await api.post('/tables', { number: adding.number, seats: Number(adding.seats) || 4, area: adding.area });
@@ -134,6 +138,7 @@ export default function Mesas() {
             <div key={it.id} className="list-row" style={{ opacity: it.status === 'cancelled' ? .45 : 1 }}>
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 600 }}>{it.qty}× {it.name}</div>
+                {it.notes && <div className="muted" style={{ fontSize: 12 }}>Obs: {it.notes}</div>}
                 <span className={'badge ' + ITEM_ST[it.status][1]} style={{ marginTop: 4 }}>{ITEM_ST[it.status][0]}</span>
               </div>
               <strong>{brl(it.qty * it.price)}</strong>
@@ -153,37 +158,18 @@ export default function Mesas() {
 
       {sheet && sheet.mode === 'menu' && (
         <Modal title={`Adicionar item · Mesa ${sheet.table.number}`} onClose={() => setSheet(null)}
-          footer={<button className="btn btn-primary" onClick={() => setSheet({ ...sheet, mode: 'order' })}>
-            <ChevronLeft size={16} /> Voltar à comanda ({brl(sheet.order.total)})</button>}>
-          <div className="prod-grid">
-            {products.filter(p => p.active).map(p => (
-              <div className="prod-tile" key={p.id} onClick={() => addItem(p)}>
-                <div className="pname">{p.name}</div>
-                <div className="pprice">{brl(p.price)}</div>
-              </div>
-            ))}
-          </div>
+          footer={<button className="btn" onClick={() => setSheet({ ...sheet, mode: 'order' })}>
+            <ChevronLeft size={16} /> Voltar à comanda</button>}>
+          <ProductPicker products={products} onConfirm={launchItems} />
         </Modal>
       )}
 
       {sheet && sheet.mode === 'pay' && (
-        <Modal title={`Fechar conta · Mesa ${sheet.table.number}`} onClose={() => setSheet({ ...sheet, mode: 'order' })}
-          footer={<>
-            <button className="btn" onClick={() => setSheet({ ...sheet, mode: 'order' })}>Voltar</button>
-            <button className="btn btn-success" onClick={closeConta}>Confirmar · {brl(sheet.order.total)}</button>
-          </>}>
-          <div className="card card-pad mb" style={{ textAlign: 'center' }}>
-            <div className="muted">Total a pagar</div>
-            <div style={{ fontSize: 32, fontWeight: 800 }}>{brl(sheet.order.total)}</div>
-          </div>
-          <label>Forma de pagamento</label>
-          <div className="grid cols-2 mt">
-            {METHODS.map(m => (
-              <button key={m} className={'btn' + (method === m ? ' btn-primary' : '')} style={{ textTransform: 'capitalize' }}
-                onClick={() => setMethod(m)}>{m}</button>
-            ))}
-          </div>
-        </Modal>
+        <PaymentModal
+          title={`Fechar conta · Mesa ${sheet.table.number}`}
+          total={sheet.order.total}
+          onClose={() => setSheet({ ...sheet, mode: 'order' })}
+          onConfirm={closeConta} />
       )}
 
       {/* ───── + Comanda: escolher mesa livre ───── */}

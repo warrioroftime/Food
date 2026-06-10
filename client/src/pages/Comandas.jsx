@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { api, brl } from '../api.js';
 import { PageHead, Modal, Loading } from '../components/ui.jsx';
+import ProductPicker from '../components/ProductPicker.jsx';
+import PaymentModal from '../components/PaymentModal.jsx';
 import { Plus, Trash2, Printer } from 'lucide-react';
 
 const ST = { received: ['Recebido', 'blue'], preparing: ['Preparando', 'yellow'], ready: ['Pronto', 'green'], delivered: ['Entregue', 'gray'], cancelled: ['Cancelado', 'red'] };
-const METHODS = ['dinheiro', 'pix', 'cartao', 'voucher'];
 
 export default function Comandas() {
   const [orders, setOrders] = useState(null);
@@ -17,9 +18,11 @@ export default function Comandas() {
   const loadSel = (id) => api.get('/orders/' + id).then(setSel);
   useEffect(() => { loadList(); api.get('/products').then(setProducts); }, []);
 
-  async function addItem(p) {
-    await api.post(`/orders/${sel.id}/items`, { product_id: p.id, qty: 1 });
-    loadSel(sel.id); loadList();
+  async function launchItems(cart) {
+    for (const i of cart) {
+      await api.post(`/orders/${sel.id}/items`, { product_id: i.id, qty: i.qty, notes: i.notes });
+    }
+    setPicker(false); loadSel(sel.id); loadList();
   }
   async function cancelItem(it) {
     await api.put('/order-items/' + it.id, { status: 'cancelled' });
@@ -70,7 +73,7 @@ export default function Comandas() {
                 <tbody>
                   {sel.items.map(it => (
                     <tr key={it.id} style={{ opacity: it.status === 'cancelled' ? .45 : 1 }}>
-                      <td>{it.name}</td>
+                      <td>{it.name}{it.notes && <div className="muted" style={{ fontSize: 12 }}>Obs: {it.notes}</div>}</td>
                       <td>{it.qty}</td>
                       <td><span className={'badge ' + ST[it.status][1]}>{ST[it.status][0]}</span></td>
                       <td className="right">{brl(it.qty * it.price)}</td>
@@ -97,43 +100,17 @@ export default function Comandas() {
 
       {picker && (
         <Modal title="Adicionar item" onClose={() => setPicker(false)}>
-          <div className="prod-grid">
-            {products.filter(p => p.active).map(p => (
-              <div className="prod-tile" key={p.id} onClick={() => { addItem(p); }}>
-                <div className="pname">{p.name}</div>
-                <div className="pprice">{brl(p.price)}</div>
-              </div>
-            ))}
-          </div>
+          <ProductPicker products={products} onConfirm={launchItems} />
         </Modal>
       )}
 
-      {closing && <CloseModal order={closing} onClose={() => setClosing(null)} onConfirm={doClose} />}
+      {closing && (
+        <PaymentModal
+          title={`Fechar comanda #${closing.id}`}
+          total={closing.total}
+          onClose={() => setClosing(null)}
+          onConfirm={doClose} />
+      )}
     </>
-  );
-}
-
-function CloseModal({ order, onClose, onConfirm }) {
-  const [method, setMethod] = useState('dinheiro');
-  return (
-    <Modal title={`Fechar comanda #${order.id}`} onClose={onClose}
-      footer={<>
-        <button className="btn" onClick={onClose}>Cancelar</button>
-        <button className="btn btn-success" onClick={() => onConfirm([{ method, amount: order.total }])}>
-          Confirmar pagamento · {brl(order.total)}
-        </button>
-      </>}>
-      <div className="card card-pad mb" style={{ textAlign: 'center' }}>
-        <div className="muted">Total a pagar</div>
-        <div style={{ fontSize: 32, fontWeight: 800 }}>{brl(order.total)}</div>
-      </div>
-      <label>Forma de pagamento</label>
-      <div className="grid cols-2 mt">
-        {METHODS.map(m => (
-          <button key={m} className={'btn' + (method === m ? ' btn-primary' : '')} style={{ textTransform: 'capitalize' }}
-            onClick={() => setMethod(m)}>{m}</button>
-        ))}
-      </div>
-    </Modal>
   );
 }

@@ -65,7 +65,27 @@ app.get('/api/dashboard', (req, res) => {
 });
 
 // ───────────────────────── CATEGORIES / PRODUCTS ─────────────────────────
-app.get('/api/categories', (req, res) => res.json(all('SELECT * FROM categories WHERE company_id=? ORDER BY name', cid(req))));
+app.get('/api/categories', (req, res) => res.json(all(
+  `SELECT c.*, (SELECT COUNT(*) FROM products p WHERE p.category_id=c.id) products
+   FROM categories c WHERE c.company_id=? ORDER BY c.name`, cid(req))));
+
+app.post('/api/categories', (req, res) => {
+  const { name, station } = req.body;
+  const r = run('INSERT INTO categories (company_id,name,station) VALUES (?,?,?)', cid(req), name, station || 'cozinha');
+  res.json(get('SELECT * FROM categories WHERE id=?', r.lastInsertRowid));
+});
+
+app.put('/api/categories/:id', (req, res) => {
+  const { name, station } = req.body;
+  run('UPDATE categories SET name=?, station=? WHERE id=? AND company_id=?', name, station, req.params.id, cid(req));
+  res.json(get('SELECT * FROM categories WHERE id=?', req.params.id));
+});
+
+app.delete('/api/categories/:id', (req, res) => {
+  run('UPDATE products SET category_id=NULL WHERE category_id=?', req.params.id);
+  run('DELETE FROM categories WHERE id=? AND company_id=?', req.params.id, cid(req));
+  res.json({ ok: true });
+});
 
 app.get('/api/products', (req, res) => {
   res.json(all(`SELECT p.*, c.name category_name, c.station FROM products p
