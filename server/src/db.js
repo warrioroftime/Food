@@ -57,6 +57,7 @@ export function migrate() {
     cost REAL DEFAULT 0,
     type TEXT DEFAULT 'prato',            -- bebida, prato, porcao, sobremesa, combo
     variations TEXT,                       -- JSON [{name:'G', price:..}]
+    print_target TEXT DEFAULT 'cozinha',  -- impressora do pedido: cozinha | bar (caixa/bar)
     active INTEGER DEFAULT 1,
     created_at TEXT DEFAULT (datetime('now'))
   );
@@ -129,7 +130,8 @@ export function migrate() {
     qty REAL NOT NULL DEFAULT 1,
     price REAL NOT NULL DEFAULT 0,
     notes TEXT,
-    station TEXT DEFAULT 'cozinha',
+    station TEXT DEFAULT 'cozinha',        -- setor do KDS (herdado do grupo)
+    print_target TEXT DEFAULT 'cozinha',  -- impressora do pedido: cozinha | bar
     status TEXT DEFAULT 'received',        -- received, preparing, ready, delivered, cancelled
     created_at TEXT DEFAULT (datetime('now'))
   );
@@ -193,4 +195,10 @@ export function migrate() {
     if (!cols.includes(c)) db.exec(`ALTER TABLE companies ADD COLUMN ${c} TEXT`);
   }
   if (!cols.includes('max_orders')) db.exec('ALTER TABLE companies ADD COLUMN max_orders INTEGER DEFAULT 60');
+
+  // Migração: impressora do pedido (cozinha | bar) em produtos e itens
+  const prodCols = db.prepare('PRAGMA table_info(products)').all().map(c => c.name);
+  if (!prodCols.includes('print_target')) db.exec(`ALTER TABLE products ADD COLUMN print_target TEXT DEFAULT 'cozinha'`);
+  const itemCols = db.prepare('PRAGMA table_info(order_items)').all().map(c => c.name);
+  if (!itemCols.includes('print_target')) db.exec(`ALTER TABLE order_items ADD COLUMN print_target TEXT DEFAULT 'cozinha'`);
 }

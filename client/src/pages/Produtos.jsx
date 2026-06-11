@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import { api, brl } from '../api.js';
 import { PageHead, Modal, Loading } from '../components/ui.jsx';
-import { Plus, Pencil, Trash2, Utensils, FolderTree, Tag } from 'lucide-react';
+import { Plus, Pencil, Trash2, Utensils, FolderTree, Tag, Printer } from 'lucide-react';
 
 const TYPES = ['bebida', 'prato', 'porcao', 'sobremesa', 'combo'];
 const STATIONS = ['cozinha', 'bar', 'churrasqueira', 'sobremesa'];
-const empty = { name: '', description: '', price: '', cost: '', type: 'prato', category_id: '', active: 1 };
+// Impressora que recebe o pedido deste produto
+const PRINT_TARGETS = { cozinha: ['Cozinha', 'yellow'], bar: ['Caixa / Bar', 'blue'] };
+const empty = { name: '', description: '', price: '', cost: '', type: 'prato', category_id: '', print_target: 'cozinha', active: 1 };
 
 export default function Produtos() {
   const [products, setProducts] = useState(null);
@@ -39,12 +41,14 @@ export default function Produtos() {
   const ProductRows = ({ items }) => (
     <div className="card table-wrap mb">
       <table>
-        <thead><tr><th>Produto</th><th>Tipo</th><th className="right">Custo</th><th className="right">Preço</th><th></th></tr></thead>
+        <thead><tr><th>Produto</th><th>Tipo</th><th>Impressão</th><th className="right">Custo</th><th className="right">Preço</th><th></th></tr></thead>
         <tbody>
           {items.map(p => (
             <tr key={p.id}>
               <td><div style={{ fontWeight: 700 }}>{p.name}</div><div className="muted" style={{ fontSize: 12 }}>{p.description}</div></td>
               <td><span className="badge gray" style={{ textTransform: 'capitalize' }}>{p.type}</span></td>
+              <td><span className={'badge ' + (PRINT_TARGETS[p.print_target]?.[1] || 'yellow')}>
+                <Printer size={11} /> {PRINT_TARGETS[p.print_target]?.[0] || 'Cozinha'}</span></td>
               <td className="right muted">{brl(p.cost)}</td>
               <td className="right" style={{ fontWeight: 700 }}>{brl(p.price)}</td>
               <td className="right">
@@ -56,7 +60,7 @@ export default function Produtos() {
               </td>
             </tr>
           ))}
-          {items.length === 0 && <tr><td colSpan="5" className="muted">Nenhum produto neste grupo.</td></tr>}
+          {items.length === 0 && <tr><td colSpan="6" className="muted">Nenhum produto neste grupo.</td></tr>}
         </tbody>
       </table>
     </div>
@@ -110,7 +114,11 @@ export default function Produtos() {
           </div>
           <div className="grid cols-2">
             <div className="form-row"><label>Tipo</label>
-              <select value={editing.type} onChange={e => setEditing({ ...editing, type: e.target.value })}>
+              <select value={editing.type} onChange={e => {
+                const type = e.target.value;
+                // Bebida sugere a impressora do Caixa/Bar automaticamente
+                setEditing({ ...editing, type, print_target: type === 'bebida' ? 'bar' : editing.print_target });
+              }}>
                 {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
               </select></div>
             <div className="form-row"><label>Grupo</label>
@@ -118,6 +126,16 @@ export default function Produtos() {
                 <option value="">— Sem grupo —</option>
                 {cats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select></div>
+          </div>
+          <div className="form-row">
+            <label className="flex" style={{ gap: 7, alignItems: 'center' }}><Printer size={15} /> Impressora do pedido</label>
+            <select value={editing.print_target || 'cozinha'} onChange={e => setEditing({ ...editing, print_target: e.target.value })}>
+              <option value="cozinha">Cozinha</option>
+              <option value="bar">Caixa / Bar</option>
+            </select>
+            <div className="muted" style={{ fontSize: 12, marginTop: 5 }}>
+              Define em qual impressora a comanda deste produto será impressa ao ser lançado.
+            </div>
           </div>
         </Modal>
       )}
@@ -164,7 +182,7 @@ function GroupManager({ cats, onClose, reload }) {
         <strong>Novo grupo</strong>
         <div className="grid cols-2 mt">
           <div><label>Nome</label><input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Ex: Pizzas" /></div>
-          <div><label>Setor (impressão/KDS)</label>
+          <div><label>Setor de produção (KDS)</label>
             <select value={form.station} onChange={e => setForm({ ...form, station: e.target.value })}>
               {STATIONS.map(s => <option key={s} value={s}>{s}</option>)}
             </select></div>

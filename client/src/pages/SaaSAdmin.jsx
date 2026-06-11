@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import { api, brl } from '../api.js';
 import { PageHead, Modal, Loading, Note } from '../components/ui.jsx';
-import { Building2, Users, Grid3x3, DollarSign, Plus, Pencil, Check, Search } from 'lucide-react';
+import { Building2, Users, Grid3x3, DollarSign, Plus, Pencil, Check, Search, LogIn, KeyRound, X } from 'lucide-react';
 
 const PLANS = { basic: ['Básico', 'gray'], pro: ['Pro', 'blue'], enterprise: ['Enterprise', 'yellow'] };
 const STATUS = { active: ['Ativa', 'green'], trial: ['Trial', 'yellow'], suspended: ['Suspensa', 'red'] };
+const ROLE_LABELS = { admin: 'Administrador', manager: 'Gerente', cashier: 'Caixa', waiter: 'Garçom', kitchen: 'Cozinha' };
+const ROLE_KEYS = Object.keys(ROLE_LABELS);
 const PRESETS = {
   basic: { max_users: 5, max_tables: 12, max_orders: 20, monthly_fee: 99.90 },
   pro: { max_users: 15, max_tables: 30, max_orders: 60, monthly_fee: 199.90 },
@@ -16,9 +18,10 @@ const emptyCompany = {
   admin_name: '', admin_email: '', admin_password: ''
 };
 
-export default function SaaSAdmin() {
+export default function SaaSAdmin({ onEnter }) {
   const [data, setData] = useState(null);
   const [editing, setEditing] = useState(null);
+  const [usersOf, setUsersOf] = useState(null);
   const [error, setError] = useState('');
   const [cnpjInfo, setCnpjInfo] = useState(null);
   const [cnpjLoading, setCnpjLoading] = useState(false);
@@ -68,7 +71,9 @@ export default function SaaSAdmin() {
   }
 
   if (!data) return <Loading />;
-  const active = data.companies.filter(c => c.status === 'active').length;
+  // A empresa-plataforma (id 1) não é um cliente — não aparece na lista nem nos totais.
+  const clients = data.companies.filter(c => c.id !== 1);
+  const active = clients.filter(c => c.status === 'active').length;
 
   return (
     <>
@@ -80,13 +85,13 @@ export default function SaaSAdmin() {
 
       <div className="grid cols-4 mb">
         <div className="card stat"><div className="icon" style={{ background: 'rgba(255,90,31,.16)', color: '#ff8a4f' }}><Building2 size={22} /></div>
-          <div className="label">Empresas</div><div className="value">{data.companies.length}</div><div className="sub">{active} ativas</div></div>
+          <div className="label">Empresas</div><div className="value">{clients.length}</div><div className="sub">{active} ativas</div></div>
         <div className="card stat"><div className="icon" style={{ background: 'rgba(34,197,94,.16)', color: '#4ade80' }}><DollarSign size={22} /></div>
           <div className="label">MRR (receita recorrente)</div><div className="value">{brl(data.mrr)}</div><div className="sub">só empresas ativas</div></div>
         <div className="card stat"><div className="icon" style={{ background: 'rgba(59,130,246,.16)', color: '#60a5fa' }}><Users size={22} /></div>
-          <div className="label">Usuários totais</div><div className="value">{data.companies.reduce((a, c) => a + c.users, 0)}</div></div>
+          <div className="label">Usuários totais</div><div className="value">{clients.reduce((a, c) => a + c.users, 0)}</div></div>
         <div className="card stat"><div className="icon" style={{ background: 'rgba(234,179,8,.16)', color: '#fde047' }}><Grid3x3 size={22} /></div>
-          <div className="label">Mesas gerenciadas</div><div className="value">{data.companies.reduce((a, c) => a + c.tables, 0)}</div></div>
+          <div className="label">Mesas gerenciadas</div><div className="value">{clients.reduce((a, c) => a + c.tables, 0)}</div></div>
       </div>
 
       {/* Planos disponíveis */}
@@ -107,7 +112,7 @@ export default function SaaSAdmin() {
         <table>
           <thead><tr><th>Empresa</th><th>CNPJ</th><th>Plano</th><th>Uso</th><th className="right">Mensalidade</th><th>Status</th><th></th></tr></thead>
           <tbody>
-            {data.companies.map(c => (
+            {clients.map(c => (
               <tr key={c.id}>
                 <td>
                   <div style={{ fontWeight: 700 }}>{c.name}</div>
@@ -122,6 +127,10 @@ export default function SaaSAdmin() {
                 <td><span className={'badge ' + STATUS[c.status][1]}>{STATUS[c.status][0]}</span></td>
                 <td className="right">
                   <div className="flex" style={{ justifyContent: 'flex-end' }}>
+                    <button className="btn btn-sm" onClick={() => setUsersOf(c)} title="Usuários de acesso desta empresa">
+                      <Users size={14} /> Usuários</button>
+                    {onEnter && <button className="btn btn-sm btn-primary" onClick={() => onEnter(c)} title="Ver o sistema deste cliente">
+                      <LogIn size={14} /> Entrar</button>}
                     {c.status !== 'active'
                       ? <button className="btn btn-sm btn-success" onClick={() => setStatus(c, 'active')}><Check size={14} /> Ativar</button>
                       : <button className="btn btn-sm" onClick={() => setStatus(c, 'suspended')}>Suspender</button>}
@@ -230,6 +239,133 @@ export default function SaaSAdmin() {
           )}
         </Modal>
       )}
+
+      {usersOf && <CompanyUsers company={usersOf} onClose={() => setUsersOf(null)} />}
     </>
+  );
+}
+
+// ───── Usuários de acesso de uma empresa (gestão pelo painel SaaS) ─────
+function CompanyUsers({ company, onClose }) {
+  const [users, setUsers] = useState(null);
+  const [error, setError] = useState('');
+  const [adding, setAdding] = useState(null);   // form de novo usuário
+  const [editing, setEditing] = useState(null); // usuário em edição (id)
+  const [reset, setReset] = useState(null);      // { id, password } redefinição de senha
+
+  const load = () => api.get(`/saas/companies/${company.id}/users`).then(setUsers);
+  useEffect(() => { load(); }, []); // eslint-disable-line
+
+  async function addUser() {
+    setError('');
+    try { await api.post(`/saas/companies/${company.id}/users`, adding); setAdding(null); load(); }
+    catch (e) { setError(e.message); }
+  }
+  async function saveEdit() {
+    setError('');
+    try {
+      await api.put(`/saas/users/${editing.id}`, { name: editing.name, email: editing.email, role: editing.role });
+      setEditing(null); load();
+    } catch (e) { setError(e.message); }
+  }
+  async function doReset() {
+    setError('');
+    if (!reset.password) { setError('Informe a nova senha.'); return; }
+    try { await api.put(`/saas/users/${reset.id}`, { password: reset.password }); setReset(null); load(); }
+    catch (e) { setError(e.message); }
+  }
+  async function toggleActive(u) {
+    setError('');
+    try { await api.put(`/saas/users/${u.id}`, { active: u.active ? 0 : 1 }); load(); }
+    catch (e) { setError(e.message); }
+  }
+
+  return (
+    <Modal title={`Usuários de acesso · ${company.name}`} onClose={onClose}
+      footer={<button className="btn" onClick={onClose}>Fechar</button>}>
+      <Note>As senhas ficam protegidas (hash) e não podem ser exibidas. Para dar acesso a alguém, use <strong>Redefinir senha</strong> e repasse a nova senha.</Note>
+      {error && <div className="error-msg">{error}</div>}
+
+      <div className="flex between mb">
+        <strong>{users ? `${users.length} usuário(s)` : 'Carregando…'}</strong>
+        {!adding && <button className="btn btn-sm btn-primary" onClick={() => { setError(''); setAdding({ name: '', email: '', password: '', role: 'waiter' }); }}>
+          <Plus size={15} /> Novo usuário</button>}
+      </div>
+
+      {adding && (
+        <div className="card card-pad mb">
+          <div className="grid cols-2">
+            <div className="form-row"><label>Nome</label>
+              <input value={adding.name} onChange={e => setAdding({ ...adding, name: e.target.value })} /></div>
+            <div className="form-row"><label>E-mail (login)</label>
+              <input type="email" value={adding.email} onChange={e => setAdding({ ...adding, email: e.target.value })} /></div>
+          </div>
+          <div className="grid cols-2">
+            <div className="form-row"><label>Senha inicial</label>
+              <input value={adding.password} onChange={e => setAdding({ ...adding, password: e.target.value })} /></div>
+            <div className="form-row"><label>Perfil</label>
+              <select value={adding.role} onChange={e => setAdding({ ...adding, role: e.target.value })}>
+                {ROLE_KEYS.map(k => <option key={k} value={k}>{ROLE_LABELS[k]}</option>)}
+              </select></div>
+          </div>
+          <div className="flex" style={{ justifyContent: 'flex-end', gap: 8 }}>
+            <button className="btn btn-sm" onClick={() => setAdding(null)}>Cancelar</button>
+            <button className="btn btn-sm btn-primary" onClick={addUser} disabled={!adding.name || !adding.email || !adding.password}>Adicionar</button>
+          </div>
+        </div>
+      )}
+
+      {users && (
+        <table>
+          <thead><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Status</th><th></th></tr></thead>
+          <tbody>
+            {users.map(u => editing?.id === u.id ? (
+              <tr key={u.id}>
+                <td><input value={editing.name} onChange={e => setEditing({ ...editing, name: e.target.value })} /></td>
+                <td><input type="email" value={editing.email} onChange={e => setEditing({ ...editing, email: e.target.value })} /></td>
+                <td><select value={editing.role} onChange={e => setEditing({ ...editing, role: e.target.value })}>
+                  {ROLE_KEYS.map(k => <option key={k} value={k}>{ROLE_LABELS[k]}</option>)}</select></td>
+                <td colSpan="2" className="right">
+                  <button className="btn btn-sm" onClick={() => setEditing(null)}>Cancelar</button>
+                  <button className="btn btn-sm btn-primary" onClick={saveEdit}>Salvar</button>
+                </td>
+              </tr>
+            ) : reset?.id === u.id ? (
+              <tr key={u.id}>
+                <td style={{ fontWeight: 600 }}>{u.name}</td>
+                <td colSpan="2">
+                  <div className="flex" style={{ gap: 6, alignItems: 'center' }}>
+                    <KeyRound size={15} />
+                    <input value={reset.password} placeholder="Nova senha" autoFocus
+                      onChange={e => setReset({ ...reset, password: e.target.value })}
+                      onKeyDown={e => { if (e.key === 'Enter') doReset(); }} />
+                  </div>
+                </td>
+                <td colSpan="2" className="right">
+                  <button className="btn btn-sm" onClick={() => setReset(null)}>Cancelar</button>
+                  <button className="btn btn-sm btn-primary" onClick={doReset}>Salvar senha</button>
+                </td>
+              </tr>
+            ) : (
+              <tr key={u.id}>
+                <td style={{ fontWeight: 600 }}>{u.name}</td>
+                <td className="muted">{u.email}</td>
+                <td><span className="badge gray">{ROLE_LABELS[u.role] || u.role}</span></td>
+                <td>{u.active ? <span className="badge green">Ativo</span> : <span className="badge red">Inativo</span>}</td>
+                <td className="right">
+                  <div className="flex" style={{ justifyContent: 'flex-end' }}>
+                    <button className="btn btn-sm" onClick={() => { setError(''); setReset({ id: u.id, password: '' }); }}><KeyRound size={14} /> Senha</button>
+                    <button className="btn btn-sm btn-ghost" title="Editar" onClick={() => { setError(''); setEditing({ id: u.id, name: u.name, email: u.email, role: u.role }); }}><Pencil size={15} /></button>
+                    <button className="btn btn-sm btn-ghost" title={u.active ? 'Desativar' : 'Ativar'} onClick={() => toggleActive(u)}>
+                      {u.active ? <X size={15} color="#f87171" /> : <Check size={15} color="#4ade80" />}</button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {users.length === 0 && <tr><td colSpan="5" className="muted">Nenhum usuário cadastrado nesta empresa.</td></tr>}
+          </tbody>
+        </table>
+      )}
+    </Modal>
   );
 }

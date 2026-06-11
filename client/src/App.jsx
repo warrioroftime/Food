@@ -16,7 +16,7 @@ import Financeiro from './pages/Financeiro.jsx';
 import Relatorios from './pages/Relatorios.jsx';
 import Funcionarios from './pages/Funcionarios.jsx';
 import Configuracoes from './pages/Configuracoes.jsx';
-import SaaSAdmin from './pages/SaaSAdmin.jsx';
+import SaaSConsole from './pages/SaaSConsole.jsx';
 
 export default function App() {
   const [user, setUser] = useState(auth.user);
@@ -25,7 +25,7 @@ export default function App() {
   useEffect(() => {
     if (auth.token && user && user.company_id == null) {
       api.get('/auth/me').then(me => {
-        const merged = { ...user, company_id: me.company_id, role: me.role };
+        const merged = { ...user, company_id: me.company_id, role: me.role, is_saas: me.is_saas };
         auth.set(auth.token, merged); setUser(merged);
       }).catch(() => {});
     }
@@ -33,11 +33,24 @@ export default function App() {
 
   if (!user) return <Login onLogin={(u) => setUser(u)} />;
 
-  const isSaasOwner = user.company_id === 1;
+  const logout = () => { auth.clear(); setUser(null); };
+  const setSession = (u) => { setUser(u); };
+
+  // Dono da plataforma, fora de um cliente → vê APENAS o painel SaaS
+  if (user.is_saas && !user.impersonating) {
+    return <SaaSConsole user={user} onEnter={setSession} onLogout={logout} />;
+  }
+
+  // Sistema do restaurante (cliente comum, ou admin SaaS que "entrou" num cliente)
+  async function exitClient() {
+    const { token, user: u } = await api.post('/saas/exit');
+    auth.set(token, u); setUser(u);
+  }
 
   return (
     <Routes>
-      <Route element={<Layout user={user} onLogout={() => { auth.clear(); setUser(null); }} />}>
+      <Route element={<Layout user={user} onLogout={logout}
+        impersonating={user.impersonating} onExitClient={exitClient} />}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/pdv" element={<PDV />} />
         <Route path="/mesas" element={<Mesas />} />
@@ -51,7 +64,6 @@ export default function App() {
         <Route path="/relatorios" element={<Relatorios />} />
         <Route path="/funcionarios" element={<Funcionarios />} />
         <Route path="/configuracoes" element={<Configuracoes />} />
-        {isSaasOwner && <Route path="/saas" element={<SaaSAdmin />} />}
         <Route path="*" element={<Navigate to="/" />} />
       </Route>
     </Routes>

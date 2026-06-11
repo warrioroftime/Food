@@ -2,9 +2,9 @@ import jwt from 'jsonwebtoken';
 
 export const JWT_SECRET = process.env.JWT_SECRET || 'fooddanilo-dev-secret-change-me';
 
-export function signToken(user) {
+export function signToken(user, extra = {}) {
   return jwt.sign(
-    { id: user.id, name: user.name, role: user.role, company_id: user.company_id },
+    { id: user.id, name: user.name, role: user.role, company_id: user.company_id, ...extra },
     JWT_SECRET,
     { expiresIn: '12h' }
   );

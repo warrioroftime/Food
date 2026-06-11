@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, ShoppingCart, Grid3x3, ClipboardList, ChefHat,
-  Bike, Package, Boxes, Users, Wallet, BarChart3, UserCog, Settings, Building2,
-  Menu, LogOut, UtensilsCrossed, ChevronDown
+  Bike, Package, Boxes, Users, Wallet, BarChart3, UserCog, Settings,
+  Menu, LogOut, UtensilsCrossed, ChevronDown, ArrowLeft
 } from 'lucide-react';
 // Garçom Mobile removido: o lançamento de pedidos acontece direto nas Mesas/Comandas (responsivo)
 
@@ -29,7 +29,6 @@ const GROUPS = [
     { to: '/relatorios', label: 'Relatórios', icon: BarChart3, color: '#60a5fa' },
     { to: '/funcionarios', label: 'Funcionários', icon: UserCog, color: '#fbbf24' },
     { to: '/configuracoes', label: 'Configurações', icon: Settings, color: '#94a3b8' },
-    { to: '/saas', label: 'Admin SaaS', icon: Building2, color: '#c084fc', saasOnly: true },
   ]},
 ];
 
@@ -47,14 +46,14 @@ function Item({ item, sub, onNav }) {
   );
 }
 
-export default function Layout({ user, onLogout }) {
+export default function Layout({ user, onLogout, impersonating, onExitClient }) {
   const [open, setOpen] = useState(false);
   const [collapsed, setCollapsed] = useState({});
   const loc = useLocation();
   const title = TITLES[loc.pathname] || 'FoodDanilo';
   const close = () => setOpen(false);
   const toggle = (t) => setCollapsed(c => ({ ...c, [t]: !c[t] }));
-  const canSee = (item) => !item.saasOnly || user.company_id === 1;
+  const canSee = () => true;
 
   return (
     <div className="layout">
@@ -89,6 +88,12 @@ export default function Layout({ user, onLogout }) {
       </aside>
 
       <div className="main">
+        {impersonating && (
+          <div className="impersonation-bar">
+            <span>Você está vendo o sistema de <strong>{impersonating.name}</strong> como administrador da plataforma.</span>
+            <button className="btn btn-sm" onClick={onExitClient}><ArrowLeft size={14} /> Voltar ao painel SaaS</button>
+          </div>
+        )}
         <header className="topbar">
           <button className="menu-toggle" onClick={() => setOpen(true)}><Menu size={20} /></button>
           <h1>{title}</h1>

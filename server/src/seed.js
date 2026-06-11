@@ -15,23 +15,26 @@ db.exec('PRAGMA foreign_keys = OFF;');
 for (const t of tables) db.exec(`DELETE FROM ${t}; DELETE FROM sqlite_sequence WHERE name='${t}';`);
 db.exec('PRAGMA foreign_keys = ON;');
 
-// Company
+// Companies — a 1ª empresa é a PLATAFORMA (dona do SaaS); as demais são clientes.
 const insCompany = db.prepare(`INSERT INTO companies
   (name, document, plan, max_users, max_tables, max_orders, monthly_fee, status)
   VALUES (?,?,?,?,?,?,?,?)`);
-insCompany.run('Bar do Danilo', '12.345.678/0001-90', 'pro', 15, 30, 60, 199.90, 'active');
+insCompany.run('FoodDanilo · Plataforma', '00.000.000/0001-00', 'enterprise', 99, 0, 0, 0, 'active'); // id 1 = dona do SaaS
+const barId = insCompany.run('Bar do Danilo', '12.345.678/0001-90', 'pro', 15, 30, 60, 199.90, 'active').lastInsertRowid;
 insCompany.run('Restaurante Sabor & Arte', '98.765.432/0001-10', 'basic', 5, 12, 20, 99.90, 'active');
 insCompany.run('Pizzaria Bella Massa', '11.222.333/0001-44', 'enterprise', 50, 80, 200, 499.90, 'trial');
-const companyId = 1;
+const companyId = barId; // todos os dados de exemplo abaixo pertencem ao Bar do Danilo
 
 // Users
-const hash = bcrypt.hashSync('admin123', 8);
 const insUser = db.prepare(`INSERT INTO users (company_id, name, email, password_hash, role, commission_pct)
   VALUES (?,?,?,?,?,?)`);
-insUser.run(companyId, 'Danilo (Admin)', 'admin@fooddanilo.com', hash, 'admin', 0);
+// Administrador da plataforma (SaaS): vê apenas o painel SaaS e entra nos clientes a partir dele.
+insUser.run(1, 'Administrador SaaS', 'admin@admin.com', bcrypt.hashSync('123456', 8), 'admin', 0);
+// Equipe do Bar do Danilo (cliente)
+const adminId = insUser.run(companyId, 'Danilo (Admin)', 'admin@fooddanilo.com', bcrypt.hashSync('admin123', 8), 'admin', 0).lastInsertRowid;
 insUser.run(companyId, 'Marina Gerente', 'marina@fooddanilo.com', bcrypt.hashSync('123456', 8), 'manager', 0);
 insUser.run(companyId, 'Carlos Caixa', 'carlos@fooddanilo.com', bcrypt.hashSync('123456', 8), 'cashier', 0);
-insUser.run(companyId, 'João Garçom', 'joao@fooddanilo.com', bcrypt.hashSync('123456', 8), 'waiter', 10);
+const joaoId = insUser.run(companyId, 'João Garçom', 'joao@fooddanilo.com', bcrypt.hashSync('123456', 8), 'waiter', 10).lastInsertRowid;
 insUser.run(companyId, 'Ana Garçonete', 'ana@fooddanilo.com', bcrypt.hashSync('123456', 8), 'waiter', 10);
 
 // Categories
@@ -83,6 +86,10 @@ insProd.run(companyId, catBebidas, 'Suco Natural', 'Laranja, abacaxi ou maracuj�
 insProd.run(companyId, catSobrem, 'Petit Gateau', 'Com sorvete de creme', 18.90, 5.00, 'sobremesa', null);
 insProd.run(companyId, catSobrem, 'Pudim', 'Pudim de leite caseiro', 12.90, 3.00, 'sobremesa', null);
 
+// Impressora do pedido: bebidas saem na impressora do Caixa/Bar; o resto na Cozinha.
+db.exec(`UPDATE products SET print_target = 'bar' WHERE type = 'bebida'`);
+db.exec(`UPDATE products SET print_target = 'cozinha' WHERE print_target IS NULL OR print_target = ''`);
+
 // Tables
 const insTab = db.prepare(`INSERT INTO restaurant_tables (company_id, number, seats, area, status) VALUES (?,?,?,?,?)`);
 const areas = ['Salão', 'Varanda', 'Mezanino'];
@@ -99,17 +106,17 @@ insCust.run(companyId, 'Pedro Santos', '(11) 97654-9876', '456.789.123-00', 'Rua
 
 // Open cash session
 const sessionId = db.prepare(`INSERT INTO cash_sessions (company_id, opened_by, opening_amount, status) VALUES (?,?,?,?)`)
-  .run(companyId, 1, 200.00, 'open').lastInsertRowid;
+  .run(companyId, adminId, 200.00, 'open').lastInsertRowid;
 db.prepare(`INSERT INTO cash_movements (session_id, type, amount, note) VALUES (?,?,?,?)`)
   .run(sessionId, 'suprimento', 100.00, 'Troco extra');
 
 // Sample open order on an occupied table (mesa 3)
 const orderId = db.prepare(`INSERT INTO orders (company_id, type, table_id, waiter_id, status) VALUES (?,?,?,?,?)`)
-  .run(companyId, 'mesa', 3, 4, 'open').lastInsertRowid;
-const insItem = db.prepare(`INSERT INTO order_items (order_id, product_id, name, qty, price, station, status) VALUES (?,?,?,?,?,?,?)`);
-insItem.run(orderId, xburger, 'X-Burguer', 2, 22.90, 'cozinha', 'preparing');
-insItem.run(orderId, fritas, 'Batata Frita (M)', 1, 24.90, 'cozinha', 'ready');
-insItem.run(orderId, 6, 'Cerveja Long Neck', 4, 12.00, 'bar', 'delivered');
+  .run(companyId, 'mesa', 3, joaoId, 'open').lastInsertRowid;
+const insItem = db.prepare(`INSERT INTO order_items (order_id, product_id, name, qty, price, station, print_target, status) VALUES (?,?,?,?,?,?,?,?)`);
+insItem.run(orderId, xburger, 'X-Burguer', 2, 22.90, 'cozinha', 'cozinha', 'preparing');
+insItem.run(orderId, fritas, 'Batata Frita (M)', 1, 24.90, 'cozinha', 'cozinha', 'ready');
+insItem.run(orderId, 6, 'Cerveja Long Neck', 4, 12.00, 'bar', 'bar', 'delivered');
 
 // Finance entries
 const insFin = db.prepare(`INSERT INTO finance_entries (company_id, kind, description, category, amount, due_date, paid) VALUES (?,?,?,?,?,?,?)`);
@@ -121,5 +128,6 @@ insFin.run(companyId, 'receivable', 'Evento corporativo - Empresa XPTO', 'Venda 
 insFin.run(companyId, 'receivable', 'Conta cliente Roberto (fiado)', 'Venda a prazo', 280.00, '2026-06-12', 0);
 
 console.log('✅ Banco populado com sucesso!');
-console.log('   Login: admin@fooddanilo.com  /  Senha: admin123');
+console.log('   Painel SaaS:  admin@admin.com         /  Senha: 123456');
+console.log('   Cliente demo: admin@fooddanilo.com    /  Senha: admin123  (Bar do Danilo)');
 db.close();

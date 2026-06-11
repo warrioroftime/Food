@@ -18,9 +18,11 @@ const all = (sql, ...p) => db.prepare(sql).all(...p);
 const get = (sql, ...p) => db.prepare(sql).get(...p);
 const run = (sql, ...p) => db.prepare(sql).run(...p);
 const cid = (req) => req.user.company_id;
-const SAAS_OWNER_ID = 1; // empresa dona do SaaS (único acesso ao painel Admin SaaS)
+const SAAS_OWNER_ID = 1; // empresa dona da plataforma (acesso ao painel Admin SaaS)
+// O acesso ao painel SaaS é controlado pela flag is_saas do token (preservada
+// mesmo quando o dono da plataforma "entra" num cliente para ver o sistema).
 const saasOnly = (req, res, next) =>
-  req.user.company_id === SAAS_OWNER_ID ? next() : res.status(403).json({ error: 'Acesso restrito ao administrador do SaaS' });
+  req.user.is_saas ? next() : res.status(403).json({ error: 'Acesso restrito ao administrador do SaaS' });
 
 // ───────────────────────── AUTH ─────────────────────────
 app.post('/api/auth/login', (req, res) => {
@@ -28,7 +30,11 @@ app.post('/api/auth/login', (req, res) => {
   const user = get('SELECT * FROM users WHERE email = ? AND active = 1', email);
   if (!user || !bcrypt.compareSync(password || '', user.password_hash))
     return res.status(401).json({ error: 'E-mail ou senha inválidos' });
-  res.json({ token: signToken(user), user: { id: user.id, name: user.name, role: user.role, company_id: user.company_id } });
+  const is_saas = user.company_id === SAAS_OWNER_ID;
+  res.json({
+    token: signToken(user, { is_saas }),
+    user: { id: user.id, name: user.name, role: user.role, company_id: user.company_id, is_saas }
+  });
 });
 
 app.get('/api/auth/me', authRequired, (req, res) => res.json(req.user));
@@ -104,18 +110,20 @@ app.get('/api/products/:id', (req, res) => {
 });
 
 app.post('/api/products', (req, res) => {
-  const { name, description, price, cost, type, category_id, variations } = req.body;
-  const r = run(`INSERT INTO products (company_id,category_id,name,description,price,cost,type,variations)
-    VALUES (?,?,?,?,?,?,?,?)`, cid(req), category_id || null, name, description || '', price || 0,
-    cost || 0, type || 'prato', variations ? JSON.stringify(variations) : null);
+  const { name, description, price, cost, type, category_id, variations, print_target } = req.body;
+  const printer = print_target === 'bar' ? 'bar' : 'cozinha';
+  const r = run(`INSERT INTO products (company_id,category_id,name,description,price,cost,type,variations,print_target)
+    VALUES (?,?,?,?,?,?,?,?,?)`, cid(req), category_id || null, name, description || '', price || 0,
+    cost || 0, type || 'prato', variations ? JSON.stringify(variations) : null, printer);
   res.json(get('SELECT * FROM products WHERE id=?', r.lastInsertRowid));
 });
 
 app.put('/api/products/:id', (req, res) => {
-  const { name, description, price, cost, type, category_id, active } = req.body;
-  run(`UPDATE products SET name=?,description=?,price=?,cost=?,type=?,category_id=?,active=?
+  const { name, description, price, cost, type, category_id, active, print_target } = req.body;
+  const printer = print_target === 'bar' ? 'bar' : 'cozinha';
+  run(`UPDATE products SET name=?,description=?,price=?,cost=?,type=?,category_id=?,print_target=?,active=?
     WHERE id=? AND company_id=?`, name, description, price, cost, type, category_id || null,
-    active ? 1 : 0, req.params.id, cid(req));
+    printer, active ? 1 : 0, req.params.id, cid(req));
   res.json(get('SELECT * FROM products WHERE id=?', req.params.id));
 });
 
@@ -235,8 +243,8 @@ app.post('/api/orders/:id/items', (req, res) => {
   const { product_id, qty, notes } = req.body;
   const p = get('SELECT p.*, c.station FROM products p LEFT JOIN categories c ON c.id=p.category_id WHERE p.id=?', product_id);
   if (!p) return res.status(404).json({ error: 'Produto não encontrado' });
-  run('INSERT INTO order_items (order_id,product_id,name,qty,price,notes,station) VALUES (?,?,?,?,?,?,?)',
-    req.params.id, p.id, p.name, qty || 1, p.price, notes || '', p.station || 'cozinha');
+  run('INSERT INTO order_items (order_id,product_id,name,qty,price,notes,station,print_target) VALUES (?,?,?,?,?,?,?,?)',
+    req.params.id, p.id, p.name, qty || 1, p.price, notes || '', p.station || 'cozinha', p.print_target || 'cozinha');
   // baixa de estoque (ficha técnica)
   const recipe = all('SELECT * FROM recipe_items WHERE product_id=?', p.id);
   for (const ri of recipe) {
@@ -343,8 +351,41 @@ app.put('/api/finance/:id/pay', (req, res) => {
 });
 
 // ───────────────────────── EMPLOYEES ─────────────────────────
+const VALID_ROLES = ['admin', 'manager', 'cashier', 'waiter', 'kitchen'];
+
 app.get('/api/employees', (req, res) =>
   res.json(all('SELECT id,name,email,role,commission_pct,active,created_at FROM users WHERE company_id=? ORDER BY name', cid(req))));
+
+app.post('/api/employees', (req, res) => {
+  const { name, email, password, role, commission_pct } = req.body || {};
+  if (!name || !email || !password)
+    return res.status(400).json({ error: 'Nome, e-mail e senha são obrigatórios' });
+  if (role && !VALID_ROLES.includes(role))
+    return res.status(400).json({ error: 'Perfil inválido' });
+  if (get('SELECT id FROM users WHERE email=?', email))
+    return res.status(400).json({ error: 'Já existe um usuário com esse e-mail' });
+  const company = get('SELECT max_users FROM companies WHERE id=?', cid(req));
+  const count = get('SELECT COUNT(*) n FROM users WHERE company_id=?', cid(req)).n;
+  if (company && company.max_users && count >= company.max_users)
+    return res.status(403).json({ error: `Limite do plano atingido: máximo de ${company.max_users} usuários. Faça upgrade do plano.` });
+  const r = run('INSERT INTO users (company_id,name,email,password_hash,role,commission_pct) VALUES (?,?,?,?,?,?)',
+    cid(req), name, email, bcrypt.hashSync(password, 8), role || 'waiter', commission_pct || 0);
+  res.json(get('SELECT id,name,email,role,commission_pct,active,created_at FROM users WHERE id=?', r.lastInsertRowid));
+});
+
+app.put('/api/employees/:id', (req, res) => {
+  const u = get('SELECT * FROM users WHERE id=? AND company_id=?', req.params.id, cid(req));
+  if (!u) return res.status(404).json({ error: 'Funcionário não encontrado' });
+  const { name, email, password, role, commission_pct, active } = req.body || {};
+  if (role && !VALID_ROLES.includes(role)) return res.status(400).json({ error: 'Perfil inválido' });
+  if (email && email !== u.email && get('SELECT id FROM users WHERE email=?', email))
+    return res.status(400).json({ error: 'Já existe um usuário com esse e-mail' });
+  const hash = password ? bcrypt.hashSync(password, 8) : u.password_hash;
+  run('UPDATE users SET name=?,email=?,password_hash=?,role=?,commission_pct=?,active=? WHERE id=?',
+    name ?? u.name, email ?? u.email, hash, role ?? u.role,
+    commission_pct ?? u.commission_pct, active == null ? u.active : (active ? 1 : 0), u.id);
+  res.json(get('SELECT id,name,email,role,commission_pct,active,created_at FROM users WHERE id=?', u.id));
+});
 
 // ───────────────────────── SAAS ADMIN ─────────────────────────
 app.get('/api/saas/companies', saasOnly, (req, res) => {
@@ -354,6 +395,61 @@ app.get('/api/saas/companies', saasOnly, (req, res) => {
     FROM companies c ORDER BY c.id`);
   const mrr = rows.filter(r => r.status === 'active').reduce((s, r) => s + r.monthly_fee, 0);
   res.json({ companies: rows, mrr });
+});
+
+// Dono da plataforma "entra" num cliente para ver o sistema dele.
+// Gera um token escopado para a empresa-alvo, mantendo is_saas para poder voltar.
+app.post('/api/saas/enter/:id', saasOnly, (req, res) => {
+  const company = get('SELECT * FROM companies WHERE id=?', req.params.id);
+  if (!company) return res.status(404).json({ error: 'Empresa não encontrada' });
+  if (company.id === SAAS_OWNER_ID) return res.status(400).json({ error: 'A própria plataforma não tem sistema operacional' });
+  const me = get('SELECT * FROM users WHERE id=?', req.user.id);
+  const impersonating = { id: company.id, name: company.name };
+  const user = { id: me.id, name: me.name, role: me.role, company_id: company.id, is_saas: true, impersonating };
+  res.json({ token: signToken({ ...me, company_id: company.id }, { is_saas: true, impersonating }), user });
+});
+
+// Volta do cliente para o painel SaaS (token de volta na empresa da plataforma).
+app.post('/api/saas/exit', saasOnly, (req, res) => {
+  const me = get('SELECT * FROM users WHERE id=?', req.user.id);
+  const user = { id: me.id, name: me.name, role: me.role, company_id: me.company_id, is_saas: true };
+  res.json({ token: signToken(me, { is_saas: true }), user });
+});
+
+// ── Usuários de cada empresa, gerenciados pelo painel SaaS ──
+// A senha nunca é devolvida (fica protegida por hash); só é possível redefinir.
+app.get('/api/saas/companies/:id/users', saasOnly, (req, res) => {
+  const c = get('SELECT id FROM companies WHERE id=?', req.params.id);
+  if (!c) return res.status(404).json({ error: 'Empresa não encontrada' });
+  res.json(all('SELECT id,name,email,role,active,created_at FROM users WHERE company_id=? ORDER BY name', c.id));
+});
+
+app.post('/api/saas/companies/:id/users', saasOnly, (req, res) => {
+  const c = get('SELECT * FROM companies WHERE id=?', req.params.id);
+  if (!c) return res.status(404).json({ error: 'Empresa não encontrada' });
+  const { name, email, password, role } = req.body || {};
+  if (!name || !email || !password) return res.status(400).json({ error: 'Nome, e-mail e senha são obrigatórios' });
+  if (role && !VALID_ROLES.includes(role)) return res.status(400).json({ error: 'Perfil inválido' });
+  if (get('SELECT id FROM users WHERE email=?', email)) return res.status(400).json({ error: 'Já existe um usuário com esse e-mail' });
+  const count = get('SELECT COUNT(*) n FROM users WHERE company_id=?', c.id).n;
+  if (c.max_users && count >= c.max_users)
+    return res.status(403).json({ error: `Limite do plano atingido: máximo de ${c.max_users} usuários.` });
+  const r = run('INSERT INTO users (company_id,name,email,password_hash,role) VALUES (?,?,?,?,?)',
+    c.id, name, email, bcrypt.hashSync(password, 8), role || 'waiter');
+  res.json(get('SELECT id,name,email,role,active,created_at FROM users WHERE id=?', r.lastInsertRowid));
+});
+
+app.put('/api/saas/users/:id', saasOnly, (req, res) => {
+  const u = get('SELECT * FROM users WHERE id=?', req.params.id);
+  if (!u) return res.status(404).json({ error: 'Usuário não encontrado' });
+  const { name, email, password, role, active } = req.body || {};
+  if (role && !VALID_ROLES.includes(role)) return res.status(400).json({ error: 'Perfil inválido' });
+  if (email && email !== u.email && get('SELECT id FROM users WHERE email=?', email))
+    return res.status(400).json({ error: 'Já existe um usuário com esse e-mail' });
+  const hash = password ? bcrypt.hashSync(password, 8) : u.password_hash;
+  run('UPDATE users SET name=?,email=?,password_hash=?,role=?,active=? WHERE id=?',
+    name ?? u.name, email ?? u.email, hash, role ?? u.role, active == null ? u.active : (active ? 1 : 0), u.id);
+  res.json(get('SELECT id,name,email,role,active,created_at FROM users WHERE id=?', u.id));
 });
 
 app.post('/api/saas/companies', saasOnly, (req, res) => {

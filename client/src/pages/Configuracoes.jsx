@@ -33,8 +33,9 @@ export default function Configuracoes() {
         <div className="grid" style={{ gap: 16 }}>
           <div className="card card-pad">
             <strong className="flex" style={{ gap: 8 }}><Printer size={18} /> Impressão</strong>
+            <p className="muted" style={{ fontSize: 12, margin: '4px 0 2px' }}>Cada produto define sua impressora (Cozinha ou Caixa/Bar) no cadastro de Produtos.</p>
             <label className="flex mt" style={{ gap: 8 }}><input type="checkbox" style={{ width: 'auto' }} checked={cfg.printKitchen ?? true} onChange={e => set('printKitchen', e.target.checked)} /> Impressão automática na cozinha</label>
-            <label className="flex mt" style={{ gap: 8 }}><input type="checkbox" style={{ width: 'auto' }} checked={cfg.printBar ?? true} onChange={e => set('printBar', e.target.checked)} /> Impressão automática no bar</label>
+            <label className="flex mt" style={{ gap: 8 }}><input type="checkbox" style={{ width: 'auto' }} checked={cfg.printBar ?? true} onChange={e => set('printBar', e.target.checked)} /> Impressão automática no caixa / bar</label>
           </div>
           <div className="card card-pad">
             <strong className="flex" style={{ gap: 8 }}><Bell size={18} /> Notificações & Integrações</strong>

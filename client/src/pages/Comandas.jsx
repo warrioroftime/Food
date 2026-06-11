@@ -33,6 +33,46 @@ export default function Comandas() {
     setClosing(null); setSel(null); loadList();
   }
 
+  // Imprime o pedido em vias separadas por impressora (Cozinha / Caixa-Bar)
+  function printOrder() {
+    const LABELS = { cozinha: 'COZINHA', bar: 'CAIXA / BAR' };
+    const groups = {};
+    for (const it of sel.items) {
+      if (it.status === 'cancelled') continue;
+      const key = it.print_target === 'bar' ? 'bar' : 'cozinha';
+      (groups[key] ||= []).push(it);
+    }
+    const keys = Object.keys(groups);
+    if (keys.length === 0) { alert('Nenhum item para imprimir.'); return; }
+    const where = sel.type === 'mesa' ? `Mesa ${sel.table_number}` : (sel.type === 'delivery' ? 'Delivery' : 'Balcão');
+    const now = new Date().toLocaleString('pt-BR');
+    const tickets = keys.map(k => `
+      <section class="ticket">
+        <h2>${LABELS[k]}</h2>
+        <div class="sub">${where} · Comanda #${sel.id}</div>
+        <div class="sub">${now}${sel.waiter_name ? ' · ' + sel.waiter_name : ''}</div>
+        <hr/>
+        ${groups[k].map(i => `<div class="row"><b>${i.qty}×</b> ${i.name}</div>${i.notes ? `<div class="obs">Obs: ${i.notes}</div>` : ''}`).join('')}
+      </section>`).join('');
+    const w = window.open('', '_blank', 'width=400,height=640');
+    if (!w) { alert('Permita pop-ups para imprimir o pedido.'); return; }
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Pedido #${sel.id}</title>
+      <style>
+        * { font-family: 'Courier New', monospace; }
+        body { margin: 0; padding: 10px; }
+        .ticket { width: 280px; margin: 0 auto 18px; padding-bottom: 14px; border-bottom: 2px dashed #000; }
+        .ticket:last-child { border-bottom: none; }
+        h2 { text-align: center; font-size: 18px; margin: 4px 0 2px; }
+        .sub { text-align: center; font-size: 12px; }
+        hr { border: none; border-top: 1px dashed #000; margin: 8px 0; }
+        .row { font-size: 15px; margin: 4px 0; }
+        .obs { font-size: 12px; margin-left: 16px; font-style: italic; }
+        @media print { .ticket { page-break-after: always; } }
+      </style></head><body>${tickets}
+      <script>window.onload=function(){window.print();}<\/script></body></html>`);
+    w.document.close();
+  }
+
   if (!orders) return <Loading />;
 
   return (
@@ -85,7 +125,7 @@ export default function Comandas() {
                 </tbody>
               </table>
               <div className="flex between mt" style={{ borderTop: '2px solid var(--border)', paddingTop: 14 }}>
-                <button className="btn"><Printer size={16} /> Imprimir</button>
+                <button className="btn" onClick={printOrder} disabled={sel.items.length === 0}><Printer size={16} /> Imprimir pedido</button>
                 <div className="right">
                   <div className="muted">Total da comanda</div>
                   <div style={{ fontSize: 26, fontWeight: 800 }}>{brl(sel.total)}</div>

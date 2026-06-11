@@ -10,8 +10,8 @@ const FEATURES = [
 ];
 
 export default function Login({ onLogin }) {
-  const [email, setEmail] = useState('admin@fooddanilo.com');
-  const [password, setPassword] = useState('admin123');
+  const [email, setEmail] = useState('admin@admin.com');
+  const [password, setPassword] = useState('123456');
   const [show, setShow] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -78,7 +78,7 @@ export default function Login({ onLogin }) {
             {loading ? 'Entrando…' : <>Entrar <ArrowRight size={17} /></>}
           </button>
 
-          <div className="login-hint"><strong>Acesso demo:</strong> admin@fooddanilo.com · admin123</div>
+          <div className="login-hint"><strong>Painel SaaS:</strong> admin@admin.com · 123456</div>
         </form>
       </main>
     </div>
