@@ -29,7 +29,7 @@ const GROUPS = [
     { to: '/relatorios', label: 'Relatórios', icon: BarChart3, color: '#60a5fa' },
     { to: '/funcionarios', label: 'Funcionários', icon: UserCog, color: '#fbbf24' },
     { to: '/configuracoes', label: 'Configurações', icon: Settings, color: '#94a3b8' },
-    { to: '/saas', label: 'Admin SaaS', icon: Building2, color: '#c084fc' },
+    { to: '/saas', label: 'Admin SaaS', icon: Building2, color: '#c084fc', saasOnly: true },
   ]},
 ];
 
@@ -54,6 +54,7 @@ export default function Layout({ user, onLogout }) {
   const title = TITLES[loc.pathname] || 'FoodDanilo';
   const close = () => setOpen(false);
   const toggle = (t) => setCollapsed(c => ({ ...c, [t]: !c[t] }));
+  const canSee = (item) => !item.saasOnly || user.company_id === 1;
 
   return (
     <div className="layout">
@@ -64,9 +65,11 @@ export default function Layout({ user, onLogout }) {
           FoodDanilo
         </div>
 
-        {TOP.map(item => <Item key={item.to} item={item} onNav={close} />)}
+        {TOP.filter(canSee).map(item => <Item key={item.to} item={item} onNav={close} />)}
 
         {GROUPS.map(group => {
+          const items = group.items.filter(canSee);
+          if (items.length === 0) return null;
           const isOpen = !collapsed[group.title];
           return (
             <div key={group.title}>
@@ -74,7 +77,7 @@ export default function Layout({ user, onLogout }) {
                 {group.title}
                 <ChevronDown size={14} className={'chev' + (isOpen ? ' open' : '')} />
               </button>
-              {isOpen && group.items.map(item => <Item key={item.to} item={item} sub onNav={close} />)}
+              {isOpen && items.map(item => <Item key={item.to} item={item} sub onNav={close} />)}
             </div>
           );
         })}

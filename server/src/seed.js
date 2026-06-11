@@ -16,12 +16,12 @@ for (const t of tables) db.exec(`DELETE FROM ${t}; DELETE FROM sqlite_sequence W
 db.exec('PRAGMA foreign_keys = ON;');
 
 // Company
-db.prepare(`INSERT INTO companies (name, document, plan, max_users, max_tables, monthly_fee, status)
-  VALUES (?,?,?,?,?,?,?)`).run('Bar do Danilo', '12.345.678/0001-90', 'pro', 15, 30, 199.90, 'active');
-db.prepare(`INSERT INTO companies (name, document, plan, max_users, max_tables, monthly_fee, status)
-  VALUES (?,?,?,?,?,?,?)`).run('Restaurante Sabor & Arte', '98.765.432/0001-10', 'basic', 5, 12, 99.90, 'active');
-db.prepare(`INSERT INTO companies (name, document, plan, max_users, max_tables, monthly_fee, status)
-  VALUES (?,?,?,?,?,?,?)`).run('Pizzaria Bella Massa', '11.222.333/0001-44', 'enterprise', 50, 80, 499.90, 'trial');
+const insCompany = db.prepare(`INSERT INTO companies
+  (name, document, plan, max_users, max_tables, max_orders, monthly_fee, status)
+  VALUES (?,?,?,?,?,?,?,?)`);
+insCompany.run('Bar do Danilo', '12.345.678/0001-90', 'pro', 15, 30, 60, 199.90, 'active');
+insCompany.run('Restaurante Sabor & Arte', '98.765.432/0001-10', 'basic', 5, 12, 20, 99.90, 'active');
+insCompany.run('Pizzaria Bella Massa', '11.222.333/0001-44', 'enterprise', 50, 80, 200, 499.90, 'trial');
 const companyId = 1;
 
 // Users

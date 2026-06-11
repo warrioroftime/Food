@@ -18,6 +18,9 @@ const all = (sql, ...p) => db.prepare(sql).all(...p);
 const get = (sql, ...p) => db.prepare(sql).get(...p);
 const run = (sql, ...p) => db.prepare(sql).run(...p);
 const cid = (req) => req.user.company_id;
+const SAAS_OWNER_ID = 1; // empresa dona do SaaS (único acesso ao painel Admin SaaS)
+const saasOnly = (req, res, next) =>
+  req.user.company_id === SAAS_OWNER_ID ? next() : res.status(403).json({ error: 'Acesso restrito ao administrador do SaaS' });
 
 // ───────────────────────── AUTH ─────────────────────────
 app.post('/api/auth/login', (req, res) => {
@@ -25,7 +28,7 @@ app.post('/api/auth/login', (req, res) => {
   const user = get('SELECT * FROM users WHERE email = ? AND active = 1', email);
   if (!user || !bcrypt.compareSync(password || '', user.password_hash))
     return res.status(401).json({ error: 'E-mail ou senha inválidos' });
-  res.json({ token: signToken(user), user: { id: user.id, name: user.name, role: user.role } });
+  res.json({ token: signToken(user), user: { id: user.id, name: user.name, role: user.role, company_id: user.company_id } });
 });
 
 app.get('/api/auth/me', authRequired, (req, res) => res.json(req.user));
@@ -160,6 +163,10 @@ app.put('/api/tables/:id', (req, res) => {
 });
 
 app.post('/api/tables', (req, res) => {
+  const company = get('SELECT max_tables FROM companies WHERE id=?', cid(req));
+  const count = get('SELECT COUNT(*) n FROM restaurant_tables WHERE company_id=?', cid(req)).n;
+  if (company && count >= company.max_tables)
+    return res.status(403).json({ error: `Limite do plano atingido: máximo de ${company.max_tables} mesas. Faça upgrade do plano.` });
   const { number, seats, area } = req.body;
   const r = run('INSERT INTO restaurant_tables (company_id,number,seats,area) VALUES (?,?,?,?)',
     cid(req), number, seats || 4, area || 'Salão');
@@ -213,6 +220,10 @@ app.get('/api/orders/:id', (req, res) => {
 });
 
 app.post('/api/orders', (req, res) => {
+  const company = get('SELECT max_orders FROM companies WHERE id=?', cid(req));
+  const open = get(`SELECT COUNT(*) n FROM orders WHERE company_id=? AND status='open'`, cid(req)).n;
+  if (company && company.max_orders && open >= company.max_orders)
+    return res.status(403).json({ error: `Limite do plano atingido: máximo de ${company.max_orders} comandas abertas ao mesmo tempo.` });
   const { type, table_id, customer_id, waiter_id } = req.body;
   const r = run('INSERT INTO orders (company_id,type,table_id,customer_id,waiter_id) VALUES (?,?,?,?,?)',
     cid(req), type || 'mesa', table_id || null, customer_id || null, waiter_id || req.user.id);
@@ -336,13 +347,94 @@ app.get('/api/employees', (req, res) =>
   res.json(all('SELECT id,name,email,role,commission_pct,active,created_at FROM users WHERE company_id=? ORDER BY name', cid(req))));
 
 // ───────────────────────── SAAS ADMIN ─────────────────────────
-app.get('/api/saas/companies', (req, res) => {
+app.get('/api/saas/companies', saasOnly, (req, res) => {
   const rows = all(`SELECT c.*,
       (SELECT COUNT(*) FROM users u WHERE u.company_id=c.id) users,
       (SELECT COUNT(*) FROM restaurant_tables t WHERE t.company_id=c.id) tables
     FROM companies c ORDER BY c.id`);
-  const mrr = rows.filter(r => r.status !== 'trial').reduce((s, r) => s + r.monthly_fee, 0);
+  const mrr = rows.filter(r => r.status === 'active').reduce((s, r) => s + r.monthly_fee, 0);
   res.json({ companies: rows, mrr });
+});
+
+app.post('/api/saas/companies', saasOnly, (req, res) => {
+  const { name, document, plan, max_users, max_tables, monthly_fee, status,
+    admin_name, admin_email, admin_password } = req.body;
+  if (!name) return res.status(400).json({ error: 'Nome da empresa é obrigatório' });
+  if (admin_email && get('SELECT id FROM users WHERE email=?', admin_email))
+    return res.status(400).json({ error: 'Já existe um usuário com esse e-mail' });
+  const { max_orders, cep, logradouro, numero, bairro, municipio, uf, phone, email } = req.body;
+  const r = run(`INSERT INTO companies
+    (name,document,plan,max_users,max_tables,max_orders,monthly_fee,status,cep,logradouro,numero,bairro,municipio,uf,phone,email)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, name, document || '', plan || 'pro', max_users || 10,
+    max_tables || 30, max_orders || 60, monthly_fee || 0, status || 'trial',
+    cep || '', logradouro || '', numero || '', bairro || '', municipio || '', uf || '', phone || '', email || '');
+  const companyId = r.lastInsertRowid;
+  if (admin_email && admin_password) {
+    run(`INSERT INTO users (company_id,name,email,password_hash,role) VALUES (?,?,?,?,?)`,
+      companyId, admin_name || 'Administrador', admin_email, bcrypt.hashSync(admin_password, 8), 'admin');
+  }
+  res.json(get('SELECT * FROM companies WHERE id=?', companyId));
+});
+
+// Consulta de CNPJ — puxa dados da empresa automaticamente (BrasilAPI + fallback ReceitaWS)
+async function fetchBrasilApi(digits) {
+  const r = await fetch('https://brasilapi.com.br/api/cnpj/v1/' + digits);
+  if (r.status === 404) return { notFound: true };
+  if (!r.ok) throw new Error('brasilapi');
+  const d = await r.json();
+  return {
+    razao_social: d.razao_social || '',
+    nome_fantasia: d.nome_fantasia || '',
+    phone: d.ddd_telefone_1 || '',
+    email: d.email || '',
+    cep: d.cep || '', logradouro: d.logradouro || '', numero: d.numero || '',
+    bairro: d.bairro || '', municipio: d.municipio || '', uf: d.uf || '',
+    situacao: d.descricao_situacao_cadastral || ''
+  };
+}
+async function fetchReceitaWs(digits) {
+  const r = await fetch('https://receitaws.com.br/v1/cnpj/' + digits);
+  if (!r.ok) throw new Error('receitaws');
+  const d = await r.json();
+  if (d.status === 'ERROR') return { notFound: true };
+  return {
+    razao_social: d.nome || '',
+    nome_fantasia: d.fantasia || '',
+    phone: d.telefone || '',
+    email: d.email || '',
+    cep: d.cep || '', logradouro: d.logradouro || '', numero: d.numero || '',
+    bairro: d.bairro || '', municipio: d.municipio || '', uf: d.uf || '',
+    situacao: d.situacao || ''
+  };
+}
+
+app.get('/api/cnpj/:cnpj', saasOnly, async (req, res) => {
+  const digits = String(req.params.cnpj).replace(/\D/g, '');
+  if (digits.length !== 14) return res.status(400).json({ error: 'CNPJ deve ter 14 dígitos' });
+  const fmt = digits.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+  let info;
+  try {
+    info = await fetchBrasilApi(digits);
+  } catch {
+    try { info = await fetchReceitaWs(digits); }
+    catch { return res.status(502).json({ error: 'Serviços de CNPJ indisponíveis. Tente novamente.' }); }
+  }
+  if (info.notFound) return res.status(404).json({ error: 'CNPJ não encontrado na Receita' });
+  const address = [info.logradouro, info.numero, info.bairro, info.municipio, info.uf, info.cep].filter(Boolean).join(', ');
+  res.json({ document: fmt, name: info.nome_fantasia || info.razao_social || '', address, ...info });
+});
+
+app.put('/api/saas/companies/:id', saasOnly, (req, res) => {
+  const c = get('SELECT * FROM companies WHERE id=?', req.params.id);
+  if (!c) return res.status(404).json({ error: 'Empresa não encontrada' });
+  const b = req.body;
+  run(`UPDATE companies SET name=?,document=?,plan=?,max_users=?,max_tables=?,max_orders=?,monthly_fee=?,status=?,
+       cep=?,logradouro=?,numero=?,bairro=?,municipio=?,uf=?,phone=?,email=? WHERE id=?`,
+    b.name ?? c.name, b.document ?? c.document, b.plan ?? c.plan, b.max_users ?? c.max_users,
+    b.max_tables ?? c.max_tables, b.max_orders ?? c.max_orders, b.monthly_fee ?? c.monthly_fee, b.status ?? c.status,
+    b.cep ?? c.cep, b.logradouro ?? c.logradouro, b.numero ?? c.numero, b.bairro ?? c.bairro,
+    b.municipio ?? c.municipio, b.uf ?? c.uf, b.phone ?? c.phone, b.email ?? c.email, c.id);
+  res.json(get('SELECT * FROM companies WHERE id=?', c.id));
 });
 
 // ───────────────────────── DELIVERY (sample-backed) ─────────────────────────

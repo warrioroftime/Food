@@ -20,8 +20,11 @@ export function migrate() {
     plan TEXT DEFAULT 'pro',
     max_users INTEGER DEFAULT 10,
     max_tables INTEGER DEFAULT 30,
+    max_orders INTEGER DEFAULT 60,
     monthly_fee REAL DEFAULT 199.90,
     status TEXT DEFAULT 'active',
+    cep TEXT, logradouro TEXT, numero TEXT, bairro TEXT, municipio TEXT, uf TEXT,
+    phone TEXT, email TEXT,
     created_at TEXT DEFAULT (datetime('now'))
   );
 
@@ -183,4 +186,11 @@ export function migrate() {
     created_at TEXT DEFAULT (datetime('now'))
   );
   `);
+
+  // Migração: garante colunas de endereço em bancos já existentes
+  const cols = db.prepare('PRAGMA table_info(companies)').all().map(c => c.name);
+  for (const c of ['cep', 'logradouro', 'numero', 'bairro', 'municipio', 'uf', 'phone', 'email']) {
+    if (!cols.includes(c)) db.exec(`ALTER TABLE companies ADD COLUMN ${c} TEXT`);
+  }
+  if (!cols.includes('max_orders')) db.exec('ALTER TABLE companies ADD COLUMN max_orders INTEGER DEFAULT 60');
 }

@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
-import { auth } from './api.js';
+import { auth, api } from './api.js';
 import Layout from './components/Layout.jsx';
 import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
@@ -21,7 +21,19 @@ import SaaSAdmin from './pages/SaaSAdmin.jsx';
 export default function App() {
   const [user, setUser] = useState(auth.user);
 
+  // Sessões antigas podem não ter company_id salvo — atualiza a partir do token
+  useEffect(() => {
+    if (auth.token && user && user.company_id == null) {
+      api.get('/auth/me').then(me => {
+        const merged = { ...user, company_id: me.company_id, role: me.role };
+        auth.set(auth.token, merged); setUser(merged);
+      }).catch(() => {});
+    }
+  }, []);
+
   if (!user) return <Login onLogin={(u) => setUser(u)} />;
+
+  const isSaasOwner = user.company_id === 1;
 
   return (
     <Routes>
@@ -39,7 +51,7 @@ export default function App() {
         <Route path="/relatorios" element={<Relatorios />} />
         <Route path="/funcionarios" element={<Funcionarios />} />
         <Route path="/configuracoes" element={<Configuracoes />} />
-        <Route path="/saas" element={<SaaSAdmin />} />
+        {isSaasOwner && <Route path="/saas" element={<SaaSAdmin />} />}
         <Route path="*" element={<Navigate to="/" />} />
       </Route>
     </Routes>

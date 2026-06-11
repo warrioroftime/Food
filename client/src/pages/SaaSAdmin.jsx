@@ -1,51 +1,235 @@
 import { useEffect, useState } from 'react';
 import { api, brl } from '../api.js';
-import { PageHead, Loading, Note } from '../components/ui.jsx';
-import { Building2, Users, Grid3x3, DollarSign } from 'lucide-react';
+import { PageHead, Modal, Loading, Note } from '../components/ui.jsx';
+import { Building2, Users, Grid3x3, DollarSign, Plus, Pencil, Check, Search } from 'lucide-react';
 
 const PLANS = { basic: ['Básico', 'gray'], pro: ['Pro', 'blue'], enterprise: ['Enterprise', 'yellow'] };
 const STATUS = { active: ['Ativa', 'green'], trial: ['Trial', 'yellow'], suspended: ['Suspensa', 'red'] };
+const PRESETS = {
+  basic: { max_users: 5, max_tables: 12, max_orders: 20, monthly_fee: 99.90 },
+  pro: { max_users: 15, max_tables: 30, max_orders: 60, monthly_fee: 199.90 },
+  enterprise: { max_users: 50, max_tables: 80, max_orders: 200, monthly_fee: 499.90 },
+};
+const emptyCompany = {
+  name: '', document: '', plan: 'pro', status: 'trial', ...PRESETS.pro,
+  cep: '', logradouro: '', numero: '', bairro: '', municipio: '', uf: '', phone: '', email: '',
+  admin_name: '', admin_email: '', admin_password: ''
+};
 
 export default function SaaSAdmin() {
   const [data, setData] = useState(null);
-  useEffect(() => { api.get('/saas/companies').then(setData); }, []);
-  if (!data) return <Loading />;
+  const [editing, setEditing] = useState(null);
+  const [error, setError] = useState('');
+  const [cnpjInfo, setCnpjInfo] = useState(null);
+  const [cnpjLoading, setCnpjLoading] = useState(false);
 
+  const load = () => api.get('/saas/companies').then(setData);
+  useEffect(() => { load(); }, []);
+
+  function applyPlan(form, plan) { return { ...form, plan, ...PRESETS[plan] }; }
+
+  async function save() {
+    setError('');
+    try {
+      if (editing.id) await api.put('/saas/companies/' + editing.id, editing);
+      else await api.post('/saas/companies', editing);
+      setEditing(null); load();
+    } catch (e) { setError(e.message); }
+  }
+  async function setStatus(c, status) { await api.put('/saas/companies/' + c.id, { status }); load(); }
+
+  async function lookupCnpj() {
+    const digits = String(editing.document || '').replace(/\D/g, '');
+    if (digits.length !== 14) { setError('Informe um CNPJ com 14 dígitos.'); return; }
+    setError(''); setCnpjInfo(null); setCnpjLoading(true);
+    try {
+      const info = await api.get('/cnpj/' + digits);
+      setCnpjInfo(info);
+      setEditing(e => ({
+        ...e,
+        document: info.document,
+        name: e.name || info.name,
+        cep: info.cep || e.cep,
+        logradouro: info.logradouro || e.logradouro,
+        numero: info.numero || e.numero,
+        bairro: info.bairro || e.bairro,
+        municipio: info.municipio || e.municipio,
+        uf: info.uf || e.uf,
+        phone: info.phone || e.phone,
+        email: info.email || e.email,
+      }));
+    } catch (err) { setError(err.message); }
+    finally { setCnpjLoading(false); }
+  }
+
+  function openForm(company) {
+    setError(''); setCnpjInfo(null);
+    setEditing(company);
+  }
+
+  if (!data) return <Loading />;
   const active = data.companies.filter(c => c.status === 'active').length;
 
   return (
     <>
-      <PageHead title="Administração SaaS" subtitle="Multiempresa — gestão de clientes, planos e cobrança" />
-      <Note>Painel do dono do SaaS. Cada empresa é um tenant isolado (campo <code>company_id</code> em todas as tabelas). Aqui controla planos, limites e faturamento recorrente.</Note>
+      <PageHead title="Administração SaaS" subtitle="Multiempresa — cadastre e configure os clientes, planos e cobrança">
+        <button className="btn btn-primary" onClick={() => openForm({ ...emptyCompany })}>
+          <Plus size={18} /> Nova empresa</button>
+      </PageHead>
+      <Note>Cada empresa é um tenant isolado (campo <code>company_id</code> em todas as tabelas). Ao criar, defina o plano (limites e mensalidade) e o acesso do administrador do cliente.</Note>
 
       <div className="grid cols-4 mb">
-        <div className="card stat"><div className="icon" style={{ background: '#ffe8df', color: '#ff5a1f' }}><Building2 size={22} /></div>
+        <div className="card stat"><div className="icon" style={{ background: 'rgba(255,90,31,.16)', color: '#ff8a4f' }}><Building2 size={22} /></div>
           <div className="label">Empresas</div><div className="value">{data.companies.length}</div><div className="sub">{active} ativas</div></div>
-        <div className="card stat"><div className="icon" style={{ background: '#dcfce7', color: '#16a34a' }}><DollarSign size={22} /></div>
-          <div className="label">MRR (receita recorrente)</div><div className="value">{brl(data.mrr)}</div></div>
-        <div className="card stat"><div className="icon" style={{ background: '#dbeafe', color: '#2563eb' }}><Users size={22} /></div>
+        <div className="card stat"><div className="icon" style={{ background: 'rgba(34,197,94,.16)', color: '#4ade80' }}><DollarSign size={22} /></div>
+          <div className="label">MRR (receita recorrente)</div><div className="value">{brl(data.mrr)}</div><div className="sub">só empresas ativas</div></div>
+        <div className="card stat"><div className="icon" style={{ background: 'rgba(59,130,246,.16)', color: '#60a5fa' }}><Users size={22} /></div>
           <div className="label">Usuários totais</div><div className="value">{data.companies.reduce((a, c) => a + c.users, 0)}</div></div>
-        <div className="card stat"><div className="icon" style={{ background: '#fef3c7', color: '#d97706' }}><Grid3x3 size={22} /></div>
+        <div className="card stat"><div className="icon" style={{ background: 'rgba(234,179,8,.16)', color: '#fde047' }}><Grid3x3 size={22} /></div>
           <div className="label">Mesas gerenciadas</div><div className="value">{data.companies.reduce((a, c) => a + c.tables, 0)}</div></div>
+      </div>
+
+      {/* Planos disponíveis */}
+      <div className="grid cols-3 mb">
+        {Object.entries(PRESETS).map(([key, p]) => (
+          <div className="card card-pad" key={key}>
+            <div className="flex between">
+              <strong style={{ fontSize: 16, textTransform: 'capitalize' }}>{PLANS[key][0]}</strong>
+              <span className={'badge ' + PLANS[key][1]}>{key}</span>
+            </div>
+            <div style={{ fontSize: 24, fontWeight: 800, margin: '8px 0' }}>{brl(p.monthly_fee)}<span className="muted" style={{ fontSize: 13, fontWeight: 400 }}>/mês</span></div>
+            <div className="muted" style={{ fontSize: 13 }}>Até {p.max_users} usuários · {p.max_tables} mesas · {p.max_orders} comandas</div>
+          </div>
+        ))}
       </div>
 
       <div className="card table-wrap">
         <table>
-          <thead><tr><th>Empresa</th><th>CNPJ</th><th>Plano</th><th>Uso</th><th className="right">Mensalidade</th><th>Status</th></tr></thead>
+          <thead><tr><th>Empresa</th><th>CNPJ</th><th>Plano</th><th>Uso</th><th className="right">Mensalidade</th><th>Status</th><th></th></tr></thead>
           <tbody>
             {data.companies.map(c => (
               <tr key={c.id}>
-                <td style={{ fontWeight: 700 }}>{c.name}</td>
-                <td className="muted">{c.document}</td>
+                <td>
+                  <div style={{ fontWeight: 700 }}>{c.name}</div>
+                  {(c.logradouro || c.municipio) && <div className="muted" style={{ fontSize: 12 }}>
+                    {[c.logradouro, c.numero].filter(Boolean).join(', ')}{c.bairro ? ` - ${c.bairro}` : ''}{c.municipio ? ` · ${c.municipio}/${c.uf}` : ''}
+                  </div>}
+                </td>
+                <td className="muted">{c.document || '—'}</td>
                 <td><span className={'badge ' + PLANS[c.plan][1]}>{PLANS[c.plan][0]}</span></td>
-                <td className="muted" style={{ fontSize: 13 }}>{c.users}/{c.max_users} usuários · {c.tables}/{c.max_tables} mesas</td>
+                <td className="muted" style={{ fontSize: 13 }}>{c.users}/{c.max_users} usuários · {c.tables}/{c.max_tables} mesas · até {c.max_orders} comandas</td>
                 <td className="right" style={{ fontWeight: 700 }}>{brl(c.monthly_fee)}</td>
                 <td><span className={'badge ' + STATUS[c.status][1]}>{STATUS[c.status][0]}</span></td>
+                <td className="right">
+                  <div className="flex" style={{ justifyContent: 'flex-end' }}>
+                    {c.status !== 'active'
+                      ? <button className="btn btn-sm btn-success" onClick={() => setStatus(c, 'active')}><Check size={14} /> Ativar</button>
+                      : <button className="btn btn-sm" onClick={() => setStatus(c, 'suspended')}>Suspender</button>}
+                    <button className="btn btn-sm btn-ghost" onClick={() => openForm({ ...c })}><Pencil size={15} /></button>
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      {editing && (
+        <Modal title={editing.id ? `Editar · ${editing.name}` : 'Nova empresa'} onClose={() => setEditing(null)}
+          footer={<>
+            <button className="btn" onClick={() => setEditing(null)}>Cancelar</button>
+            <button className="btn btn-primary" onClick={save} disabled={!editing.name}>Salvar</button>
+          </>}>
+          {error && <div className="error-msg">{error}</div>}
+          <div className="form-row">
+            <label>CNPJ <span className="muted">(digite e busque para puxar os dados)</span></label>
+            <div className="flex" style={{ gap: 8, alignItems: 'stretch' }}>
+              <input value={editing.document || ''} placeholder="00.000.000/0000-00"
+                onChange={e => setEditing({ ...editing, document: e.target.value })}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); lookupCnpj(); } }} />
+              <button className="btn btn-primary" style={{ whiteSpace: 'nowrap' }} onClick={lookupCnpj} disabled={cnpjLoading}>
+                <Search size={16} /> {cnpjLoading ? 'Buscando…' : 'Buscar'}
+              </button>
+            </div>
+          </div>
+          {cnpjInfo && (
+            <div className="placeholder-note" style={{ background: 'rgba(34,197,94,.12)', color: '#86efac', borderColor: 'rgba(34,197,94,.3)' }}>
+              <Check size={18} style={{ flexShrink: 0, marginTop: 1 }} />
+              <div>
+                <strong>{cnpjInfo.razao_social}</strong>{cnpjInfo.situacao && ` · ${cnpjInfo.situacao}`}
+                {cnpjInfo.nome_fantasia && <div>Nome fantasia: {cnpjInfo.nome_fantasia}</div>}
+                {cnpjInfo.address && <div style={{ fontSize: 12 }}>{cnpjInfo.address}</div>}
+                {cnpjInfo.phone && <div style={{ fontSize: 12 }}>Tel: {cnpjInfo.phone}</div>}
+              </div>
+            </div>
+          )}
+          <div className="form-row"><label>Nome da empresa</label>
+            <input value={editing.name} onChange={e => setEditing({ ...editing, name: e.target.value })} /></div>
+
+          {/* Endereço */}
+          <div className="grid cols-2">
+            <div className="form-row"><label>CEP</label>
+              <input value={editing.cep || ''} onChange={e => setEditing({ ...editing, cep: e.target.value })} /></div>
+            <div className="form-row"><label>Bairro</label>
+              <input value={editing.bairro || ''} onChange={e => setEditing({ ...editing, bairro: e.target.value })} /></div>
+          </div>
+          <div className="grid" style={{ gridTemplateColumns: '1fr 110px' }}>
+            <div className="form-row"><label>Rua / Logradouro</label>
+              <input value={editing.logradouro || ''} onChange={e => setEditing({ ...editing, logradouro: e.target.value })} /></div>
+            <div className="form-row"><label>Número</label>
+              <input value={editing.numero || ''} onChange={e => setEditing({ ...editing, numero: e.target.value })} /></div>
+          </div>
+          <div className="grid" style={{ gridTemplateColumns: '1fr 80px' }}>
+            <div className="form-row"><label>Cidade</label>
+              <input value={editing.municipio || ''} onChange={e => setEditing({ ...editing, municipio: e.target.value })} /></div>
+            <div className="form-row"><label>UF</label>
+              <input value={editing.uf || ''} onChange={e => setEditing({ ...editing, uf: e.target.value })} /></div>
+          </div>
+          <div className="grid cols-2">
+            <div className="form-row"><label>Telefone</label>
+              <input value={editing.phone || ''} onChange={e => setEditing({ ...editing, phone: e.target.value })} /></div>
+            <div className="form-row"><label>E-mail</label>
+              <input value={editing.email || ''} onChange={e => setEditing({ ...editing, email: e.target.value })} /></div>
+          </div>
+
+          <div className="grid cols-2">
+            <div className="form-row"><label>Plano</label>
+              <select value={editing.plan} onChange={e => setEditing(applyPlan(editing, e.target.value))}>
+                {Object.keys(PLANS).map(k => <option key={k} value={k}>{PLANS[k][0]}</option>)}
+              </select></div>
+            <div className="form-row"><label>Status</label>
+              <select value={editing.status} onChange={e => setEditing({ ...editing, status: e.target.value })}>
+                {Object.keys(STATUS).map(k => <option key={k} value={k}>{STATUS[k][0]}</option>)}
+              </select></div>
+          </div>
+
+          <div className="grid cols-3">
+            <div className="form-row"><label>Máx. usuários</label>
+              <input type="number" value={editing.max_users} onChange={e => setEditing({ ...editing, max_users: Number(e.target.value) })} /></div>
+            <div className="form-row"><label>Máx. mesas</label>
+              <input type="number" value={editing.max_tables} onChange={e => setEditing({ ...editing, max_tables: Number(e.target.value) })} /></div>
+            <div className="form-row"><label>Máx. comandas abertas</label>
+              <input type="number" value={editing.max_orders} onChange={e => setEditing({ ...editing, max_orders: Number(e.target.value) })} /></div>
+          </div>
+          <div className="form-row"><label>Mensalidade (R$)</label>
+            <input type="number" step="0.01" value={editing.monthly_fee} onChange={e => setEditing({ ...editing, monthly_fee: Number(e.target.value) })} /></div>
+
+          {!editing.id && (
+            <>
+              <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0 14px' }} />
+              <label style={{ fontSize: 13, color: 'var(--text)', marginBottom: 10 }}>Acesso do administrador do cliente</label>
+              <div className="grid cols-2">
+                <div className="form-row"><label>Nome</label>
+                  <input value={editing.admin_name} onChange={e => setEditing({ ...editing, admin_name: e.target.value })} /></div>
+                <div className="form-row"><label>E-mail (login)</label>
+                  <input type="email" value={editing.admin_email} onChange={e => setEditing({ ...editing, admin_email: e.target.value })} /></div>
+              </div>
+              <div className="form-row"><label>Senha inicial</label>
+                <input value={editing.admin_password} onChange={e => setEditing({ ...editing, admin_password: e.target.value })} placeholder="Defina uma senha de acesso" /></div>
+            </>
+          )}
+        </Modal>
+      )}
     </>
   );
 }

@@ -38,7 +38,9 @@ export default function Mesas() {
     load();
   }
   async function openOrder(t) {
-    const o = await api.post('/orders', { type: 'mesa', table_id: t.id });
+    let o;
+    try { o = await api.post('/orders', { type: 'mesa', table_id: t.id }); }
+    catch (e) { alert(e.message); return; }
     const order = await api.get('/orders/' + o.id);
     setPickComanda(false);
     setSheet({ table: t, mode: 'order', order });
@@ -62,7 +64,9 @@ export default function Mesas() {
     setSheet(null); load();
   }
   async function addTable() {
-    await api.post('/tables', { number: adding.number, seats: Number(adding.seats) || 4, area: adding.area });
+    try {
+      await api.post('/tables', { number: adding.number, seats: Number(adding.seats) || 4, area: adding.area });
+    } catch (e) { alert(e.message); return; }
     setAdding(null); load();
   }
 
@@ -72,7 +76,7 @@ export default function Mesas() {
   const filtered = tables.filter(t =>
     (area === 'todos' || t.area === area) &&
     (!search || String(t.number).toLowerCase().includes(search.toLowerCase())));
-  const freeTables = tables.filter(t => t.status === 'free');
+  const availableTables = tables.filter(t => !t.order_id); // mesas sem comanda aberta
 
   return (
     <>
@@ -118,11 +122,12 @@ export default function Mesas() {
             <span className={'badge ' + STATUS[sheet.table.status].badge}>{STATUS[sheet.table.status].label}</span>
             <span className="muted">{sheet.table.seats} lugares · {sheet.table.area}</span>
           </div>
+          <button className="btn btn-primary mb" style={{ width: '100%', justifyContent: 'center' }}
+            onClick={() => openOrder(sheet.table)}>Abrir comanda e lançar pedido</button>
           <div className="grid cols-2">
-            {sheet.table.status === 'free' && <button className="btn btn-primary" onClick={() => openOrder(sheet.table)}>Abrir comanda</button>}
             {sheet.table.status !== 'reserved' && <button className="btn" onClick={() => setStatus(sheet.table, 'reserved')}>Reservar</button>}
-            {sheet.table.status !== 'free' && <button className="btn btn-success" onClick={() => setStatus(sheet.table, 'free')}>Liberar mesa</button>}
             {sheet.table.status === 'free' && <button className="btn" onClick={() => setStatus(sheet.table, 'occupied')}>Marcar ocupada</button>}
+            {sheet.table.status !== 'free' && <button className="btn btn-success" onClick={() => setStatus(sheet.table, 'free')}>Liberar mesa</button>}
           </div>
         </Modal>
       )}
@@ -175,11 +180,11 @@ export default function Mesas() {
       {/* ───── + Comanda: escolher mesa livre ───── */}
       {pickComanda && (
         <Modal title="Nova comanda" onClose={() => setPickComanda(false)}>
-          <p className="muted mb">Selecione uma mesa livre:</p>
-          {freeTables.length === 0 ? <div className="empty">Nenhuma mesa livre no momento.</div> : (
+          <p className="muted mb">Selecione uma mesa para abrir a comanda:</p>
+          {availableTables.length === 0 ? <div className="empty">Todas as mesas já têm comanda aberta.</div> : (
             <div className="tables-grid">
-              {freeTables.map(t => (
-                <div key={t.id} className="table-card free" onClick={() => openOrder(t)}>
+              {availableTables.map(t => (
+                <div key={t.id} className={'table-card ' + t.status} onClick={() => openOrder(t)}>
                   <div className="tnum">Mesa {t.number}</div>
                   <div className="tinfo">{t.seats} lugares · {t.area}</div>
                 </div>
